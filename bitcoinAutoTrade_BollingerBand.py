@@ -45,20 +45,25 @@ print("autotrade start")
 while True:
     try:
         now = datetime.datetime.now()
-        start_time = get_start_time("KRW-BTC")
-        end_time = start_time + datetime.timedelta(days=1)
+        start_time = get_start_time("KRW-BTC")  # 시작 시간
+        end_time = start_time + datetime.timedelta(days=1)  # 종료 시간
 
+        # 현재 시간이 시작 시간과 종료 시간 사이인 경우
         if start_time < now < end_time - datetime.timedelta(seconds=10):
             upper_band, lower_band = get_bollinger_band("KRW-BTC")
             current_price = get_current_price("KRW-BTC")
+
+            # 현재 가격이 볼린저 밴드 상단을 초과하는 경우 매도
             if current_price > upper_band:
-                krw = get_balance("KRW")
-                if krw > 5000:
-                    upbit.buy_market_order("KRW-BTC", krw*0.9995)
-            elif current_price < lower_band:
                 btc = get_balance("BTC")
                 if btc > 0.00008:
                     upbit.sell_market_order("KRW-BTC", btc*0.9995)
+            # 현재 가격이 볼린저 밴드 하단 아래로 떨어지는 경우 매수
+            elif current_price < lower_band:
+                krw = get_balance("KRW")
+                if krw > 5000:
+                    upbit.buy_market_order("KRW-BTC", krw*0.9995)
+        # 현재 시간이 종료 시간 이후인 경우 보유 비트코인 전량 매도
         else:
             btc = get_balance("BTC")
             if btc > 0.00008:
