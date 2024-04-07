@@ -3,8 +3,8 @@ import pyupbit
 import datetime
 import pandas as pd
 
-access = "OWSEtnPWwdBNVnvMzHWwvkDhRZZN6m8pzGn49azb"
-secret = "TsXy0mZ2tgbsieVmLx5n01LPxhw0IHQxoDaW01rP"
+access = "access-code"
+secret = "secrete-code"
 
 def get_bollinger_band(ticker, k=20, n=2):
     """볼린저 밴드 계산"""
