@@ -61,7 +61,7 @@ def check_buy_conditions(df):
     if latest['ma20'] and latest['close'] < latest['ma20']:
         # 하락하는 동안 거래량 감소
         decreasing_volume = True
-        for i in range(3, 8):  # 최근 5개 봉을 확인
+        for i in range(3, 6):  # 최근 3개 봉을 확인
             if df['volume'].iloc[-i] >= df['volume'].iloc[-i-1]:
                 decreasing_volume = False
                 break
