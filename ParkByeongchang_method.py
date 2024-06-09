@@ -37,6 +37,8 @@ def is_doji(candle):
 def is_explosive_volume(latest_volume, avg_volume):
     """폭발적인 거래량 증가 판별: 이전 평균 거래량의 1.5배 이상"""
     return latest_volume >= 1.5 * avg_volume
+    """폭발적인 거래량 증가 판별: 직전 거래량의 1.8배 이상"""
+    #return latest_volume >= 1.8 * prev_volume
 
 def check_buy_conditions(df):
     latest = df.iloc[-1]

@@ -43,11 +43,11 @@ def is_doji(candle):
     total_size = abs(candle['high'] - candle['low'])
     return body_size / total_size <= 0.05
 
-def is_explosive_volume(latest_volume, avg_volume):
+def is_explosive_volume(latest_volume, prev_volume):
     """
-    폭발적인 거래량 증가 판별: 이전 평균 거래량의 1.5배 이상
+    폭발적인 거래량 증가 판별: 직전 거래량의 1.8배 이상
     """
-    return latest_volume >= 1.5 * avg_volume
+    return latest_volume >= 1.8 * prev_volume
 
 def check_buy_conditions(df):
     """
@@ -56,18 +56,16 @@ def check_buy_conditions(df):
     latest = df.iloc[-1]
     prev = df.iloc[-2]
 
-    avg_volume_5 = df['vol_ma5'].iloc[-2]
-
     # 매수 제 1원칙: 5일 이동평균선 위에 있을 때, 폭발적인 거래량 상승과 함께 장대양봉 발생 시
     if latest['ma5'] and latest['close'] > latest['ma5']:
-        if is_explosive_volume(latest['volume'], avg_volume_5) and is_long_bullish_candle(latest):
+        if is_explosive_volume(latest['volume'], prev['volume']) and is_long_bullish_candle(latest):
             print("매수 제 1원칙 충족")
             return True
 
     # 매수 제 2원칙: 5일 이동평균선과 20일 이동평균선 사이에 있을 때, 거래량 폭발 증가와 전일 장대음봉의 50% 넘는 양봉 발생 시
     if latest['ma5'] and latest['ma20'] and latest['ma5'] > latest['close'] > latest['ma20']:
         if latest['volume'] < prev['volume'] and latest['close'] > prev['close'] * 0.5:
-            if is_explosive_volume(latest['volume'], avg_volume_5) and is_long_bullish_candle(latest):
+            if is_explosive_volume(latest['volume'], prev['volume']) and is_long_bullish_candle(latest):
                 print("매수 제 2원칙 충족")
                 return True
 
@@ -79,7 +77,7 @@ def check_buy_conditions(df):
             if df['volume'].iloc[-i] >= df['volume'].iloc[-i-1]:
                 decreasing_volume = False
                 break
-        if decreasing_volume and is_explosive_volume(latest['volume'], avg_volume_5) and is_long_bullish_candle(latest):
+        if decreasing_volume and is_explosive_volume(latest['volume'], prev['volume']) and is_long_bullish_candle(latest):
             print("매수 제 3원칙 충족")
             return True
 
@@ -92,18 +90,16 @@ def check_sell_conditions(df):
     latest = df.iloc[-1]
     prev = df.iloc[-2]
 
-    avg_volume_5 = df['vol_ma5'].iloc[-2]
-
     # 매도 제 1원칙: 5일 이동평균선 위, 거래량 급증과 함께 장대음봉 또는 십자형 캔들 발생 시
     if latest['ma5'] and latest['close'] > latest['ma5']:
-        if is_explosive_volume(latest['volume'], avg_volume_5):
+        if is_explosive_volume(latest['volume'], prev['volume']):
             if is_long_bearish_candle(latest) or is_doji(latest):
                 print("매도 제 1원칙 충족")
                 return True
 
     # 매도 제 2원칙: 5일 이동평균선과 20일 이동평균선 사이, 거래량 급증과 함께 음봉 발생 시
     if latest['ma5'] and latest['ma20'] and latest['ma5'] > latest['close'] > latest['ma20']:
-        if is_explosive_volume(latest['volume'], avg_volume_5):
+        if is_explosive_volume(latest['volume'], prev['volume']):
             if latest['close'] < prev['close']:
                 print("매도 제 2원칙 충족")
                 return True
