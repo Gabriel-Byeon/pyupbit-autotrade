@@ -121,29 +121,35 @@ def auto_trade():
 
     while True:
         try:
-            for coin in coins:
-                # 1시간봉 데이터 가져오기
-                df = pyupbit.get_ohlcv(coin, interval="minute60", count=200)
-                df = get_moving_averages(df)
+            now = datetime.now()
+            # 5분봉이 끝나는 시점 (4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59분)에 작업 수행
+            if now.minute % 5 == 4 and now.second == 59:
+                for coin in coins:
+                    # 5분봉 데이터 가져오기
+                    df = pyupbit.get_ohlcv(coin, interval="minute5", count=200)
+                    df = get_moving_averages(df)
 
-                # 매수 조건 확인 및 매수
-                if check_buy_conditions(df) and trade_counts[coin] < max_trades_per_coin:
-                    balance = upbit.get_balance("KRW")
-                    if balance >= investment_per_trade:
-                        print(f"Buying 10000 KRW of {coin}")
-                        upbit.buy_market_order(coin, 10000)
-                        trade_counts[coin] += 1
+                    # 매수 조건 확인 및 매수
+                    if check_buy_conditions(df) and trade_counts[coin] < max_trades_per_coin:
+                        balance = upbit.get_balance("KRW")
+                        if balance >= investment_per_trade:
+                            print(f"Buying 10000 KRW of {coin}")
+                            upbit.buy_market_order(coin, 10000)
+                            trade_counts[coin] += 1
 
-                # 매도 조건 확인 및 매도
-                if check_sell_conditions(df):
-                    coin_balance = upbit.get_balance(coin.replace("KRW-", ""))
-                    if coin_balance > 0.00008:  # 최소 거래 가능 수량 (업비트 기준)
-                        print(f"Selling {coin_balance} of {coin}")
-                        upbit.sell_market_order(coin, coin_balance)
-                        trade_counts[coin] = 0  # 매도 후 매수 횟수 초기화
+                    # 매도 조건 확인 및 매도
+                    if check_sell_conditions(df):
+                        coin_balance = upbit.get_balance(coin.replace("KRW-", ""))
+                        if coin_balance > 0.00008:  # 최소 거래 가능 수량 (업비트 기준)
+                            print(f"Selling {coin_balance} of {coin}")
+                            upbit.sell_market_order(coin, coin_balance)
+                            trade_counts[coin] = 0  # 매도 후 매수 횟수 초기화
 
-            # 1분마다 반복
-            time.sleep(60)
+                # 분봉 끝난 후 1초 대기
+                time.sleep(1)
+            else:
+                # 다음 체크포인트까지 대기
+                time.sleep(1)
         except Exception as e:
             print(e)
             time.sleep(60)
