@@ -11,34 +11,48 @@ secret_key = 'your_secret_key'
 upbit = pyupbit.Upbit(access_key, secret_key)
 
 def get_moving_averages(df, windows=[5, 20]):
+    """
+    이동평균선 및 거래량 평균 계산
+    """
     for window in windows:
         df[f'ma{window}'] = df['close'].rolling(window=window).mean()
         df[f'vol_ma{window}'] = df['volume'].rolling(window=window).mean()
     return df
 
 def is_long_bullish_candle(candle):
-    """장대양봉 판별: 몸통이 전체 길이의 70% 이상인 양봉"""
+    """
+    장대양봉 판별: 몸통이 전체 길이의 70% 이상인 양봉
+    """
     body_size = abs(candle['close'] - candle['open'])
     total_size = abs(candle['high'] - candle['low'])
     return candle['close'] > candle['open'] and body_size / total_size >= 0.7
 
 def is_long_bearish_candle(candle):
-    """장대음봉 판별: 몸통이 전체 길이의 70% 이상인 음봉"""
+    """
+    장대음봉 판별: 몸통이 전체 길이의 70% 이상인 음봉
+    """
     body_size = abs(candle['close'] - candle['open'])
     total_size = abs(candle['high'] - candle['low'])
     return candle['close'] < candle['open'] and body_size / total_size >= 0.7
 
 def is_doji(candle):
-    """십자형 캔들 판별: 몸통이 전체 길이의 5% 이하인 경우"""
+    """
+    십자형 캔들 판별: 몸통이 전체 길이의 5% 이하인 경우
+    """
     body_size = abs(candle['close'] - candle['open'])
     total_size = abs(candle['high'] - candle['low'])
     return body_size / total_size <= 0.05
 
 def is_explosive_volume(latest_volume, avg_volume):
-    """폭발적인 거래량 증가 판별: 이전 평균 거래량의 1.5배 이상"""
+    """
+    폭발적인 거래량 증가 판별: 이전 평균 거래량의 1.5배 이상
+    """
     return latest_volume >= 1.5 * avg_volume
 
 def check_buy_conditions(df):
+    """
+    매수 조건 확인 함수
+    """
     latest = df.iloc[-1]
     prev = df.iloc[-2]
 
@@ -72,6 +86,9 @@ def check_buy_conditions(df):
     return False
 
 def check_sell_conditions(df):
+    """
+    매도 조건 확인 함수
+    """
     latest = df.iloc[-1]
     prev = df.iloc[-2]
 
@@ -94,22 +111,43 @@ def check_sell_conditions(df):
     return False
 
 def auto_trade():
+    """
+    자동 매매 실행 함수
+    """
+    # 모니터링할 코인 리스트
+    coins = ["KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-DOGE", "KRW-SOL"]
+    max_investment_per_coin = 50000  # 코인당 최대 투자 금액
+    investment_per_trade = 10000  # 매수당 투자 금액
+    max_trades_per_coin = max_investment_per_coin // investment_per_trade  # 코인당 최대 매수 횟수
+
+    # 각 코인별 매수 횟수 초기화
+    trade_counts = {coin: 0 for coin in coins}
+
     while True:
         try:
-            df = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=200)
-            df = get_moving_averages(df)
+            for coin in coins:
+                # 1시간봉 데이터 가져오기
+                df = pyupbit.get_ohlcv(coin, interval="minute60", count=200)
+                df = get_moving_averages(df)
 
-            if check_buy_conditions(df):
-                print("Buying BTC")
-                upbit.buy_market_order("KRW-BTC", 10000)  # 10,000원어치 BTC 매수
+                # 매수 조건 확인 및 매수
+                if check_buy_conditions(df) and trade_counts[coin] < max_trades_per_coin:
+                    balance = upbit.get_balance("KRW")
+                    if balance >= investment_per_trade:
+                        print(f"Buying 10000 KRW of {coin}")
+                        upbit.buy_market_order(coin, 10000)
+                        trade_counts[coin] += 1
 
-            if check_sell_conditions(df):
-                print("Selling BTC")
-                balance = upbit.get_balance("KRW-BTC")
-                if balance > 0.00008:  # 최소 거래 가능 수량 (업비트 기준)
-                    upbit.sell_market_order("KRW-BTC", balance)
+                # 매도 조건 확인 및 매도
+                if check_sell_conditions(df):
+                    coin_balance = upbit.get_balance(coin.replace("KRW-", ""))
+                    if coin_balance > 0.00008:  # 최소 거래 가능 수량 (업비트 기준)
+                        print(f"Selling {coin_balance} of {coin}")
+                        upbit.sell_market_order(coin, coin_balance)
+                        trade_counts[coin] = 0  # 매도 후 매수 횟수 초기화
 
-            time.sleep(60)  # 1분마다 반복
+            # 1분마다 반복
+            time.sleep(60)
         except Exception as e:
             print(e)
             time.sleep(60)
