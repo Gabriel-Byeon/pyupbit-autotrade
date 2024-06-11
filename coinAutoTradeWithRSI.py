@@ -53,15 +53,19 @@ def buyRSI(symbol, rsi_threshold, amount):
             if amount > krw_balance:
                 amount = krw_balance * 0.9995
             order = upbit.buy_market_order(symbol, amount)
+            if order is None:
+                send_discord_message(f"Error: 매수 주문 실패 - {symbol}")
+                return None, None
             message = f"구매 완료: {symbol} - 금액: {amount} KRW"
             send_discord_message(message)
             # 매수 주문 정보 확인
-            avg_price = order['price']
-            volume = amount / avg_price  # 매수한 수량
+            time.sleep(1)  # 주문 처리를 위해 잠시 대기
+            volume = upbit.get_balance(symbol)  # 매수한 수량
+            avg_price = amount / volume
             return avg_price, volume
         time.sleep(1)
 
-def sellRSI(symbol, rsi_threshold, amount, avg_price, volume, stop_loss_pct):
+def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
     while True:
         current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
         current_price = pyupbit.get_current_price(symbol)
@@ -70,7 +74,11 @@ def sellRSI(symbol, rsi_threshold, amount, avg_price, volume, stop_loss_pct):
             if volume > balance:
                 volume = balance
             sell_order = upbit.sell_market_order(symbol, volume)
-            sell_price = sell_order['price']
+            if sell_order is None:
+                send_discord_message(f"Error: 매도 주문 실패 - {symbol}")
+                return
+            time.sleep(1)  # 주문 처리를 위해 잠시 대기
+            sell_price = current_price
             profit_loss = (sell_price - avg_price) * volume
             message = f"판매 완료: {symbol} - 수량: {volume}\n손익: {profit_loss} KRW"
             send_discord_message(message)
@@ -84,7 +92,8 @@ while True:
         symbol_to_trade = search_onetime(25)
         if symbol_to_trade:
             avg_price, volume = buyRSI(symbol_to_trade, 30, 100000)  # 여기서 100000은 거래할 금액 (KRW)입니다.
-            sellRSI(symbol_to_trade, 70, 100000, avg_price, volume, 0.10)  # 손절 기준은 10% 손실로 설정
+            if avg_price is not None and volume is not None:
+                sellRSI(symbol_to_trade, 70, avg_price, volume, 0.10)  # 손절 기준은 10% 손실로 설정
     except Exception as e:
         send_discord_message(f"Error: {e}")
         time.sleep(1)
