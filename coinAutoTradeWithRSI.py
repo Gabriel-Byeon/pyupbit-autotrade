@@ -55,7 +55,7 @@ def buyRSI(symbol, rsi_threshold, amount):
             order = upbit.buy_market_order(symbol, amount)
             message = f"구매 완료: {symbol} - 금액: {amount} KRW"
             send_discord_message(message)
-            avg_price = order['price']  # 매수 평균가
+            avg_price = pyupbit.get_order(symbol)['price']  # 매수 평균가
             return avg_price
         time.sleep(1)
 
@@ -68,10 +68,13 @@ def sellRSI(symbol, rsi_threshold, amount, avg_price, stop_loss_pct):
             if amount > balance:
                 amount = balance
             upbit.sell_market_order(symbol, amount)
-            message = f"판매 완료: {symbol} - 수량: {amount}"
+            profit_loss = (current_price - avg_price) * amount / current_price
+            message = f"판매 완료: {symbol} - 수량: {amount}\n손익: {profit_loss} KRW"
             send_discord_message(message)
             break
         time.sleep(1)
+    krw_balance = upbit.get_balance("KRW")
+    send_discord_message(f"현재 현금 잔액: {krw_balance} KRW")
 
 while True:
     try:
