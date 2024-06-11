@@ -52,16 +52,18 @@ def buyRSI(symbol, rsi_threshold, amount):
             krw_balance = upbit.get_balance("KRW")
             if amount > krw_balance:
                 amount = krw_balance * 0.9995
-            upbit.buy_market_order(symbol, amount)
+            order = upbit.buy_market_order(symbol, amount)
             message = f"구매 완료: {symbol} - 금액: {amount} KRW"
             send_discord_message(message)
-            break
+            avg_price = order['price']  # 매수 평균가
+            return avg_price
         time.sleep(1)
 
-def sellRSI(symbol, rsi_threshold, amount):
+def sellRSI(symbol, rsi_threshold, amount, avg_price, stop_loss_pct):
     while True:
         current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
-        if current_rsi > rsi_threshold:
+        current_price = pyupbit.get_current_price(symbol)
+        if current_rsi > rsi_threshold or current_price <= avg_price * (1 - stop_loss_pct):
             balance = upbit.get_balance(symbol)
             if amount > balance:
                 amount = balance
@@ -75,8 +77,8 @@ while True:
     try:
         symbol_to_trade = search_onetime(25)
         if symbol_to_trade:
-            buyRSI(symbol_to_trade, 30, 100000)  # 여기서 100000은 거래할 금액 (KRW)입니다.
-            sellRSI(symbol_to_trade, 70, 100000)  # 여기서 100000은 거래할 금액 (KRW)입니다.
+            avg_price = buyRSI(symbol_to_trade, 30, 100000)  # 여기서 100000은 거래할 금액 (KRW)입니다.
+            sellRSI(symbol_to_trade, 70, 100000, avg_price, 0.10)  # 손절 기준은 10% 손실로 설정
     except Exception as e:
         send_discord_message(f"Error: {e}")
         time.sleep(1)
