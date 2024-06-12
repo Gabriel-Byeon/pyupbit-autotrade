@@ -83,7 +83,8 @@ def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
                     return
                 time.sleep(1)  # 주문 처리를 위해 잠시 대기
                 sell_price = current_price
-                message = f"판매 완료: {symbol} - 수량: {volume}\n 판매금액: {sell_price} KRW"
+                profit_loss = (sell_price - avg_price) * volume
+                message = f"판매 완료: {symbol} - 수량: {volume}\n손익: {profit_loss} KRW"
                 send_discord_message(message)
                 break
             time.sleep(1)
