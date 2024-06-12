@@ -47,43 +47,50 @@ def search_onetime(settingRSI):
 
 def buyRSI(symbol, rsi_threshold, amount):
     while True:
-        current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
-        if current_rsi < rsi_threshold:
-            krw_balance = upbit.get_balance("KRW")
-            if amount > krw_balance:
-                amount = krw_balance * 0.9995
-            order = upbit.buy_market_order(symbol, amount)
-            if order is None:
-                send_discord_message(f"Error: 매수 주문 실패 - {symbol}")
-                return None, None
-            message = f"구매 완료: {symbol} - 금액: {amount} KRW"
-            send_discord_message(message)
-            # 매수 주문 정보 확인
-            time.sleep(1)  # 주문 처리를 위해 잠시 대기
-            volume = upbit.get_balance(symbol)  # 매수한 수량
-            avg_price = amount / volume
-            return avg_price, volume
-        time.sleep(1)
+        try:
+            current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
+            if current_rsi < rsi_threshold:
+                krw_balance = upbit.get_balance("KRW")
+                if amount > krw_balance:
+                    amount = krw_balance * 0.9995
+                order = upbit.buy_market_order(symbol, amount)
+                if order is None:
+                    send_discord_message(f"Error: 매수 주문 실패 - {symbol}")
+                    return None, None
+                message = f"구매 완료: {symbol} - 금액: {amount} KRW"
+                send_discord_message(message)
+                time.sleep(1)  # 주문 처리를 위해 잠시 대기
+                volume = upbit.get_balance(symbol)  # 매수한 수량
+                avg_price = float(amount) / float(volume)
+                return avg_price, volume
+            time.sleep(1)
+        except Exception as e:
+            send_discord_message(f"Error in buyRSI: {e}")
+            time.sleep(1)
 
 def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
     while True:
-        current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
-        current_price = pyupbit.get_current_price(symbol)
-        if current_rsi > rsi_threshold or current_price <= avg_price * (1 - stop_loss_pct):
-            balance = upbit.get_balance(symbol)
-            if volume > balance:
-                volume = balance
-            sell_order = upbit.sell_market_order(symbol, volume)
-            if sell_order is None:
-                send_discord_message(f"Error: 매도 주문 실패 - {symbol}")
-                return
-            time.sleep(1)  # 주문 처리를 위해 잠시 대기
-            sell_price = current_price
-            profit_loss = (sell_price - avg_price) * volume
-            message = f"판매 완료: {symbol} - 수량: {volume}\n손익: {profit_loss} KRW"
-            send_discord_message(message)
-            break
-        time.sleep(1)
+        try:
+            current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
+            current_price = pyupbit.get_current_price(symbol)
+            if current_rsi > rsi_threshold or current_price <= avg_price * (1 - stop_loss_pct):
+                balance = upbit.get_balance(symbol)
+                if volume > balance:
+                    volume = balance
+                sell_order = upbit.sell_market_order(symbol, volume)
+                if sell_order is None:
+                    send_discord_message(f"Error: 매도 주문 실패 - {symbol}")
+                    return
+                time.sleep(1)  # 주문 처리를 위해 잠시 대기
+                sell_price = current_price
+                profit_loss = (sell_price - avg_price) * volume
+                message = f"판매 완료: {symbol} - 수량: {volume}\n손익: {profit_loss} KRW"
+                send_discord_message(message)
+                break
+            time.sleep(1)
+        except Exception as e:
+            send_discord_message(f"Error in sellRSI: {e}")
+            time.sleep(1)
     krw_balance = upbit.get_balance("KRW")
     send_discord_message(f"현재 현금 잔액: {krw_balance} KRW")
 
@@ -95,5 +102,5 @@ while True:
             if avg_price is not None and volume is not None:
                 sellRSI(symbol_to_trade, 70, avg_price, volume, 0.10)  # 손절 기준은 10% 손실로 설정
     except Exception as e:
-        send_discord_message(f"Error: {e}")
+        send_discord_message(f"Error in main loop: {e}")
         time.sleep(1)
