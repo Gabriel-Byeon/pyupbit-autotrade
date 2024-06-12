@@ -11,9 +11,6 @@ upbit = pyupbit.Upbit(access, secret)
 # Discord Webhook URL
 discord_webhook_url = "your-discord-webhook-url"
 
-# 수수료 비율 (0.05%)
-fee_rate = 0.0005
-
 def send_discord_message(message):
     data = {"content": message}
     response = requests.post(discord_webhook_url, json=data)
@@ -63,9 +60,8 @@ def buyRSI(symbol, rsi_threshold, amount):
                 message = f"구매 완료: {symbol} - 금액: {amount} KRW"
                 send_discord_message(message)
                 time.sleep(1)  # 주문 처리를 위해 잠시 대기
-                # 매수한 수량 계산
-                avg_price = amount / upbit.get_avg_buy_price(symbol)
-                volume = amount / avg_price
+                volume = upbit.get_balance(symbol)  # 매수한 수량
+                avg_price = float(amount) / float(volume)
                 return avg_price, volume
             time.sleep(1)
         except Exception as e:
@@ -87,10 +83,7 @@ def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
                     return
                 time.sleep(1)  # 주문 처리를 위해 잠시 대기
                 sell_price = current_price
-                buy_fee = avg_price * volume * fee_rate
-                sell_fee = sell_price * volume * fee_rate
-                profit_loss = (sell_price * volume - sell_fee) - (avg_price * volume + buy_fee)
-                message = f"판매 완료: {symbol} - 수량: {volume}\n손익: {profit_loss} KRW"
+                message = f"판매 완료: {symbol} - 수량: {volume}\n 판매금액: {sell_price} KRW"
                 send_discord_message(message)
                 break
             time.sleep(1)
