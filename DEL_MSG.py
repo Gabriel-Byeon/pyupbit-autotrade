@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
 import asyncio
 import sys
@@ -18,17 +18,20 @@ clean_channel_id = 삭제하고싶은 채널의 ID
 @bot.event
 async def on_ready():
     print('봇이 준비되었습니다.')
+    delete_old_messages.start()
+
+@tasks.loop(hours=24)  # 24시간마다 실행
+async def delete_old_messages():
+    print('오래된 메시지 삭제 작업을 시작합니다.')
 
     channel = bot.get_channel(clean_channel_id)
 
     now = datetime.now(timezone.utc)
-
     one_day_ago = now - timedelta(days=1)
 
     deleted_message_count = 0  
 
     async for message in channel.history(limit=None, before=one_day_ago):
-
         time_difference = now - message.created_at
 
         # 1일(86400초)이 지난 메시지인 경우 삭제합니다.
@@ -42,10 +45,8 @@ async def on_ready():
 
     await channel.send(f'{deleted_message_count}개의 메시지를 삭제했습니다.')
 
-    await bot.close()
-    await asyncio.sleep(1)
-    await bot.loop.shutdown_asyncgens()
-    bot.loop.stop()
-    sys.exit()
+@delete_old_messages.before_loop
+async def before_delete_old_messages():
+    await bot.wait_until_ready()
 
 bot.run(TOKEN)
