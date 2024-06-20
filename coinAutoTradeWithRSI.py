@@ -15,9 +15,9 @@ def send_discord_message(message):
     data = {"content": message}
     response = requests.post(discord_webhook_url, json=data)
     if response.status_code == 204:
-        print("Message sent to Discord successfully")
+        print("디스코드로 메시지를 성공적으로 보냈습니다")
     else:
-        print(f"Failed to send message to Discord: {response.status_code}")
+        print(f"디스코드로 메시지 전송 실패: {response.status_code}")
 
 def rsi(ohlc: pd.DataFrame, period: int = 14):
     delta = ohlc["close"].diff()
@@ -44,6 +44,7 @@ def search_onetime(settingRSI):
             send_discord_message(message)
             return symbol
         time.sleep(1)
+    return None
 
 def buyRSI(symbol, rsi_threshold, amount):
     while True:
@@ -101,6 +102,9 @@ while True:
             avg_price, volume = buyRSI(symbol_to_trade, 30, 100000)  # 여기서 100000은 거래할 금액 (KRW)입니다.
             if avg_price is not None and volume is not None:
                 sellRSI(symbol_to_trade, 70, avg_price, volume, 0.10)  # 손절 기준은 10% 손실로 설정
+        else:
+            send_discord_message("거래 가능한 심볼을 찾지 못했습니다. 다시 시도합니다.")
+            time.sleep(60)  # 60초 대기 후 다시 시도
     except Exception as e:
         send_discord_message(f"Error in main loop: {e}")
         time.sleep(1)

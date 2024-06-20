@@ -86,7 +86,13 @@ def buyRSI(symbol, rsi_threshold, leverage):
             current_rsi = rsi(df, 14).iloc[-1]
             if current_rsi < rsi_threshold:
                 usdt_balance = exchange.fetch_balance()['total']['USDT']
+                market_info = exchange.market(symbol)
+                max_quantity = market_info['limits']['amount']['max']  # 거래소에서 허용하는 최대 수량
                 amount = usdt_balance * leverage * 0.9995  # 사용 가능한 전체 잔액에 레버리지 적용
+
+                if amount > max_quantity:
+                    amount = max_quantity  # 최대 수량으로 제한
+
                 order = exchange.create_market_buy_order(symbol, amount)
                 if order is None:
                     send_discord_message(f"Error: 매수 주문 실패 - {symbol}")
