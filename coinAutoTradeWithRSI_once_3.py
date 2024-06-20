@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import pyupbit
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 # Upbit API key 설정
 access = "your-access-key"
@@ -12,13 +13,19 @@ upbit = pyupbit.Upbit(access, secret)
 # Discord Webhook URL
 discord_webhook_url = "your-discord-webhook-url"
 
+lock = threading.Lock()
+
 def send_discord_message(message):
     data = {"content": message}
-    response = requests.post(discord_webhook_url, json=data)
-    if response.status_code == 204:
-        print("디스코드로 메시지를 성공적으로 보냈습니다")
-    else:
-        print(f"디스코드로 메시지 전송 실패: {response.status_code}")
+    try:
+        response = requests.post(discord_webhook_url, json=data)
+        if response.status_code == 204:
+            print("디스코드로 메시지를 성공적으로 보냈습니다")
+        else:
+            print(f"디스코드로 메시지 전송 실패: {response.status_code}")
+            print(f"응답 내용: {response.text}")
+    except requests.exceptions.RequestException as e:
+        print(f"디스코드로 메시지 전송 중 예외 발생: {e}")
 
 def rsi(ohlc: pd.DataFrame, period: int = 14):
     delta = ohlc["close"].diff()
@@ -31,6 +38,7 @@ def rsi(ohlc: pd.DataFrame, period: int = 14):
     return pd.Series(100 - (100 / (1 + RS)), name="RSI")
 
 def search_onetime(settingRSI):
+    send_discord_message("search_onetime 함수 시작")
     tickers = pyupbit.get_tickers(fiat="KRW")
     for symbol in tickers:
         url = "https://api.upbit.com/v1/candles/minutes/10"
@@ -45,16 +53,20 @@ def search_onetime(settingRSI):
             send_discord_message(message)
             return symbol
         time.sleep(1)
+    send_discord_message("과매도 상태인 심볼을 찾지 못함")
     return None
 
 def buyRSI(symbol, rsi_threshold, amount):
+    send_discord_message(f"buyRSI 함수 시작: {symbol}")
     while True:
         try:
             current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
             if current_rsi < rsi_threshold:
-                krw_balance = upbit.get_balance("KRW")
-                if amount > krw_balance:
-                    amount = krw_balance * 0.9995
+                send_discord_message(f"RSI 조건 만족: {symbol}, RSI: {current_rsi}")
+                with lock:
+                    krw_balance = upbit.get_balance("KRW")
+                    if amount > krw_balance:
+                        amount = krw_balance * 0.9995
                 order = upbit.buy_market_order(symbol, amount)
                 if order is None:
                     send_discord_message(f"Error: 매수 주문 실패 - {symbol}")
@@ -71,14 +83,17 @@ def buyRSI(symbol, rsi_threshold, amount):
             time.sleep(1)
 
 def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
+    send_discord_message(f"sellRSI 함수 시작: {symbol}")
     while True:
         try:
             current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
             current_price = pyupbit.get_current_price(symbol)
             if current_rsi > rsi_threshold or current_price <= avg_price * (1 - stop_loss_pct):
-                balance = upbit.get_balance(symbol)
-                if volume > balance:
-                    volume = balance
+                send_discord_message(f"매도 조건 만족: {symbol}, RSI: {current_rsi}, 현재가: {current_price}")
+                with lock:
+                    balance = upbit.get_balance(symbol)
+                    if volume > balance:
+                        volume = balance
                 sell_order = upbit.sell_market_order(symbol, volume)
                 if sell_order is None:
                     send_discord_message(f"Error: 매도 주문 실패 - {symbol}")
@@ -97,21 +112,29 @@ def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
     send_discord_message(f"현재 현금 잔액: {krw_balance} KRW")
 
 def trade_symbol(symbol):
+    send_discord_message(f"trade_symbol 함수 시작: {symbol}")
     try:
         avg_price, volume = buyRSI(symbol, 30, 100000)  # 여기서 100000은 거래할 금액 (KRW)입니다.
         if avg_price is not None and volume is not None:
             sellRSI(symbol, 70, avg_price, volume, 0.10)  # 손절 기준은 10% 손실로 설정
     except Exception as e:
         send_discord_message(f"Error in trade loop for {symbol}: {e}")
+    finally:
+        with lock:
+            symbols_trading.remove(symbol)
 
 symbols_trading = []
+
+# 디버깅을 위한 테스트 메시지 전송
+send_discord_message("테스트 메시지: 연결 상태를 확인합니다.")
 
 while True:
     try:
         if len(symbols_trading) < 2:    # 한 번에 2개까지 거래 가능
             symbol_to_trade = search_onetime(25)
             if symbol_to_trade and symbol_to_trade not in symbols_trading:
-                symbols_trading.append(symbol_to_trade)
+                with lock:
+                    symbols_trading.append(symbol_to_trade)
                 with ThreadPoolExecutor() as executor:
                     executor.submit(trade_symbol, symbol_to_trade)
         else:
