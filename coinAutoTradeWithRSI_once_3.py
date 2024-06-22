@@ -1,9 +1,9 @@
+import asyncio
 import requests
 import pandas as pd
-import time
 import pyupbit
 from concurrent.futures import ThreadPoolExecutor
-import threading
+from collections import defaultdict
 
 # Upbit API key 설정
 access = "your-access-key"
@@ -13,19 +13,20 @@ upbit = pyupbit.Upbit(access, secret)
 # Discord Webhook URL
 discord_webhook_url = "your-discord-webhook-url"
 
-lock = threading.Lock()
+# 심볼별로 상태를 저장할 딕셔너리
+trade_status = defaultdict(lambda: {"buying": False, "selling": False, "owned": False, "latest_rsi": None, "latest_price": None})
+
+# 현재 거래 중인 심볼 개수를 추적하는 변수
+max_active_trades = 2
+active_trades = set()
 
 def send_discord_message(message):
     data = {"content": message}
-    try:
-        response = requests.post(discord_webhook_url, json=data)
-        if response.status_code == 204:
-            print("디스코드로 메시지를 성공적으로 보냈습니다")
-        else:
-            print(f"디스코드로 메시지 전송 실패: {response.status_code}")
-            print(f"응답 내용: {response.text}")
-    except requests.exceptions.RequestException as e:
-        print(f"디스코드로 메시지 전송 중 예외 발생: {e}")
+    response = requests.post(discord_webhook_url, json=data)
+    if response.status_code == 204:
+        print("디스코드로 메시지를 성공적으로 보냈습니다")
+    else:
+        print(f"디스코드로 메시지 전송 실패: {response.status_code}")
 
 def rsi(ohlc: pd.DataFrame, period: int = 14):
     delta = ohlc["close"].diff()
@@ -37,109 +38,162 @@ def rsi(ohlc: pd.DataFrame, period: int = 14):
     RS = _gain / _loss
     return pd.Series(100 - (100 / (1 + RS)), name="RSI")
 
-def search_onetime(settingRSI):
-    send_discord_message("search_onetime 함수 시작")
-    tickers = pyupbit.get_tickers(fiat="KRW")
-    for symbol in tickers:
+def fetch_ohlcv(symbol):
+    try:
         url = "https://api.upbit.com/v1/candles/minutes/10"
         querystring = {"market": symbol, "count": "500"}
         response = requests.request("GET", url, params=querystring)
         data = response.json()
-        df = pd.DataFrame(data).iloc[::-1].reset_index()
+        if not data or isinstance(data, dict):
+            send_discord_message(f"No OHLCV data fetched for {symbol} or invalid response format")
+            return None
+        df = pd.DataFrame(data)
+        if df.empty:
+            send_discord_message(f"No OHLCV data fetched for {symbol}")
+            return None
+        df = df.iloc[::-1].reset_index(drop=True)
         df['close'] = df["trade_price"]
-        rsi_value = rsi(df, 14).iloc[-1]
-        if rsi_value < settingRSI:
-            message = f"!!과매도 현상 발견!! {symbol}"
-            send_discord_message(message)
-            return symbol
-        time.sleep(1)
-    send_discord_message("과매도 상태인 심볼을 찾지 못함")
+        return df
+    except Exception as e:
+        send_discord_message(f"Error fetching OHLCV data for {symbol}: {e}")
+        return None
+
+async def search_onetime(settingRSI, executor):
+    tickers = pyupbit.get_tickers(fiat="KRW")
+    send_discord_message("과매도 현상을 찾기 위한 검색을 시작합니다.")
+    
+    loop = asyncio.get_event_loop()
+    futures = [loop.run_in_executor(executor, fetch_ohlcv, symbol) for symbol in tickers]
+
+    for symbol, future in zip(tickers, asyncio.as_completed(futures)):
+        try:
+            df = await future
+            if df is not None:
+                rsi_value = rsi(df, 14).iloc[-1]
+                trade_status[symbol]["latest_rsi"] = rsi_value
+                if rsi_value < settingRSI and not trade_status[symbol]["owned"] and symbol not in active_trades:
+                    message = f"!!과매도 현상 발견!! {symbol}"
+                    send_discord_message(message)
+                    return symbol
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            send_discord_message(f"Error in search_onetime ({symbol}): {e}")
+
+    send_discord_message("과매도 현상이 발견되지 않았습니다.")
     return None
 
-def buyRSI(symbol, rsi_threshold, amount):
-    send_discord_message(f"buyRSI 함수 시작: {symbol}")
-    while True:
-        try:
-            current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
-            if current_rsi < rsi_threshold:
-                send_discord_message(f"RSI 조건 만족: {symbol}, RSI: {current_rsi}")
-                with lock:
-                    krw_balance = upbit.get_balance("KRW")
-                    if amount > krw_balance:
-                        amount = krw_balance * 0.9995
-                order = upbit.buy_market_order(symbol, amount)
-                if order is None:
-                    send_discord_message(f"Error: 매수 주문 실패 - {symbol}")
-                    return None, None
-                message = f"구매 완료: {symbol} - 금액: {amount} KRW"
-                send_discord_message(message)
-                time.sleep(1)  # 주문 처리를 위해 잠시 대기
-                volume = upbit.get_balance(symbol)  # 매수한 수량
-                avg_price = float(amount) / float(volume)
-                return avg_price, volume
-            time.sleep(1)
-        except Exception as e:
-            send_discord_message(f"Error in buyRSI: {e}")
-            time.sleep(1)
+async def buyRSI(symbol, rsi_threshold, amount):
+    global trade_status
+    if trade_status[symbol]["buying"] or trade_status[symbol]["owned"]:
+        send_discord_message(f"{symbol} 매수 시도 중 또는 이미 보유 중입니다. 다시 시도하지 않습니다.")
+        return None, None
+    
+    trade_status[symbol]["buying"] = True
+    try:
+        send_discord_message(f"{symbol} 매수를 시도합니다.")
+        df = pyupbit.get_ohlcv(symbol, interval="minute10")
+        if df is None or df.empty:
+            send_discord_message(f"No OHLCV data for {symbol} during buy attempt")
+            trade_status[symbol]["buying"] = False
+            return None, None
+        current_rsi = rsi(df, 14).iloc[-1]
+        trade_status[symbol]["latest_rsi"] = current_rsi
+        if current_rsi < rsi_threshold:
+            krw_balance = upbit.get_balance("KRW")
+            if amount > krw_balance:
+                amount = krw_balance * 0.9995
+            order = upbit.buy_market_order(symbol, amount)
+            if order is None:
+                send_discord_message(f"Error: 매수 주문 실패 - {symbol}")
+                trade_status[symbol]["buying"] = False
+                return None, None
+            message = f"구매 완료: {symbol} - 금액: {amount} KRW"
+            send_discord_message(message)
+            await asyncio.sleep(1)  # 주문 처리를 위해 잠시 대기
+            volume = upbit.get_balance(symbol)  # 매수한 수량
+            avg_price = float(amount) / float(volume)
+            send_discord_message(f"{symbol} 매수 평균가: {avg_price}, 수량: {volume}")
+            trade_status[symbol]["owned"] = True
+            active_trades.add(symbol)
+            trade_status[symbol]["buying"] = False
+            return avg_price, volume
+        await asyncio.sleep(1)
+    except Exception as e:
+        send_discord_message(f"Error in buyRSI: {e}")
+        trade_status[symbol]["buying"] = False
+    return None, None
 
-def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
-    send_discord_message(f"sellRSI 함수 시작: {symbol}")
-    while True:
-        try:
-            current_rsi = rsi(pyupbit.get_ohlcv(symbol, interval="minute10"), 14).iloc[-1]
+async def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
+    global trade_status
+    if trade_status[symbol]["selling"]:
+        return
+
+    trade_status[symbol]["selling"] = True
+    send_discord_message(f"{symbol} 매도를 시도합니다.")
+    try:
+        while trade_status[symbol]["selling"]:
+            df = pyupbit.get_ohlcv(symbol, interval="minute10")
+            if df is None or df.empty:
+                send_discord_message(f"No OHLCV data for {symbol} during sell attempt")
+                trade_status[symbol]["selling"] = False
+                return
+            current_rsi = rsi(df, 14).iloc[-1]
             current_price = pyupbit.get_current_price(symbol)
+            trade_status[symbol]["latest_rsi"] = current_rsi
+            trade_status[symbol]["latest_price"] = current_price
             if current_rsi > rsi_threshold or current_price <= avg_price * (1 - stop_loss_pct):
-                send_discord_message(f"매도 조건 만족: {symbol}, RSI: {current_rsi}, 현재가: {current_price}")
-                with lock:
-                    balance = upbit.get_balance(symbol)
-                    if volume > balance:
-                        volume = balance
+                balance = upbit.get_balance(symbol)
+                if volume > balance:
+                    volume = balance
                 sell_order = upbit.sell_market_order(symbol, volume)
                 if sell_order is None:
                     send_discord_message(f"Error: 매도 주문 실패 - {symbol}")
+                    trade_status[symbol]["selling"] = False
                     return
-                time.sleep(1)  # 주문 처리를 위해 잠시 대기
+                await asyncio.sleep(1)  # 주문 처리를 위해 잠시 대기
                 sell_price = current_price
                 profit_loss = (sell_price - avg_price) * volume
                 message = f"판매 완료: {symbol} - 수량: {volume}\n손익: {profit_loss} KRW"
                 send_discord_message(message)
-                break
-            time.sleep(1)
-        except Exception as e:
-            send_discord_message(f"Error in sellRSI: {e}")
-            time.sleep(1)
-    krw_balance = upbit.get_balance("KRW")
-    send_discord_message(f"현재 현금 잔액: {krw_balance} KRW")
-
-def trade_symbol(symbol):
-    send_discord_message(f"trade_symbol 함수 시작: {symbol}")
-    try:
-        avg_price, volume = buyRSI(symbol, 30, 100000)  # 여기서 100000은 거래할 금액 (KRW)입니다.
-        if avg_price is not None and volume is not None:
-            sellRSI(symbol, 70, avg_price, volume, 0.10)  # 손절 기준은 10% 손실로 설정
+                trade_status[symbol]["owned"] = False
+                active_trades.remove(symbol)
+                trade_status[symbol]["selling"] = False
+                return
+            await asyncio.sleep(1)
     except Exception as e:
-        send_discord_message(f"Error in trade loop for {symbol}: {e}")
-    finally:
-        with lock:
-            symbols_trading.remove(symbol)
+        send_discord_message(f"Error in sellRSI: {e}")
+        trade_status[symbol]["selling"] = False
 
-symbols_trading = []
+    trade_status[symbol]["selling"] = False
 
-# 디버깅을 위한 테스트 메시지 전송
-send_discord_message("테스트 메시지: 연결 상태를 확인합니다.")
+async def trade_symbol(symbol_to_trade, buy_rsi, sell_rsi, trade_amount, stop_loss_pct):
+    avg_price, volume = await buyRSI(symbol_to_trade, buy_rsi, trade_amount)
+    if avg_price is not None and volume is not None:
+        await sellRSI(symbol_to_trade, sell_rsi, avg_price, volume, stop_loss_pct)
 
-while True:
-    try:
-        if len(symbols_trading) < 2:    # 한 번에 2개까지 거래 가능
-            symbol_to_trade = search_onetime(25)
-            if symbol_to_trade and symbol_to_trade not in symbols_trading:
-                with lock:
-                    symbols_trading.append(symbol_to_trade)
-                with ThreadPoolExecutor() as executor:
-                    executor.submit(trade_symbol, symbol_to_trade)
-        else:
-            send_discord_message("거래 가능한 심볼을 찾지 못했습니다. 다시 시도합니다.")
-            time.sleep(10)  # 10초 대기 후 다시 시도
-    except Exception as e:
-        send_discord_message(f"Error in main loop: {e}")
-        time.sleep(1)
+async def main():
+    send_discord_message("봇이 시작되었습니다.")
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        while True:
+            try:
+                tasks = []
+                # 필요한 심볼 개수만큼 병렬 검색
+                search_tasks = [search_onetime(25, executor) for _ in range(max_active_trades - len(active_trades))]
+                results = await asyncio.gather(*search_tasks)
+
+                for symbol_to_trade in results:
+                    if symbol_to_trade:
+                        tasks.append(trade_symbol(symbol_to_trade, 30, 70, 100000, 0.10))  # 100000은 거래할 금액 (KRW)입니다.
+                
+                if tasks:
+                    await asyncio.gather(*tasks)
+                if not tasks and len(active_trades) < max_active_trades:
+                    send_discord_message("거래 가능한 심볼을 찾지 못했습니다. 다시 시도합니다.")
+                    await asyncio.sleep(60)  # 60초 대기 후 다시 시도
+            except Exception as e:
+                send_discord_message(f"Error in main loop: {e}")
+                await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
