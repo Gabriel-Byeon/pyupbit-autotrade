@@ -1,127 +1,169 @@
 import ccxt
-import pandas as pd
 import time
-import requests
+import pandas as pd
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+from discord_webhook import DiscordWebhook
 
-# Binance Futures API key 설정
-api_key = "your-api-key"
-secret_key = "your-secret-key"
+DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL"
+MAX_RISK_PER_TRADE = 0.01  # 거래당 최대 리스크 (계좌 잔고의 1%)
+
+def send_discord_message(message):
+    webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL, content=message)
+    response = webhook.execute()
+    if response.status_code != 200:
+        print(f"디스코드 메시지 전송 실패: {response.status_code}, {response.text}")
+
 exchange = ccxt.binance({
-    'apiKey': api_key,
-    'secret': secret_key,
+    'apiKey': 'YOUR_API_KEY',
+    'secret': 'YOUR_SECRET_KEY',
+    'enableRateLimit': True,
     'options': {
-        'defaultType': 'future',  # 선물 계정을 사용하도록 설정
+        'defaultType': 'future'
     }
 })
 
-# Discord Webhook URL
-discord_webhook_url = "your-discord-webhook-url"
+def get_account_balance():
+    balance = exchange.fetch_balance()
+    return balance['USDT']['free']
 
-def send_discord_message(message):
-    data = {"content": message}
-    response = requests.post(discord_webhook_url, json=data)
-    if response.status_code == 204:
-        print("Message sent to Discord successfully")
-    else:
-        print(f"Failed to send message to Discord: {response.status_code}")
-
-def rsi(ohlc: pd.DataFrame, period: int = 14):
-    delta = ohlc["close"].diff()
-    up, down = delta.copy(), delta.copy()
-    up[up < 0] = 0
-    down[down > 0] = 0
-    _gain = up.ewm(com=(period - 1), min_periods=period).mean()
-    _loss = down.abs().ewm(com=(period - 1), min_periods=period).mean()
-    RS = _gain / _loss
-    return pd.Series(100 - (100 / (1 + RS)), name="RSI")
-
-def set_leverage(symbol, leverage):
-    try:
-        exchange.fapiPrivate_post_leverage({
-            'symbol': symbol.replace('/', ''),
-            'leverage': leverage
-        })
-        send_discord_message(f"레버리지 설정: {symbol} - {leverage}배")
-    except Exception as e:
-        send_discord_message(f"Error setting leverage for {symbol}: {e}")
-
-def search_onetime(settingRSI):
+def get_all_symbols():
     markets = exchange.load_markets()
-    for symbol in markets:
-        if '/USDT' in symbol:
+    symbols = []
+    for symbol in markets.keys():
+        market = markets[symbol]
+        if market['active'] and 'USDT' in symbol and '/' in symbol:
             try:
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe='10m', limit=500)
-                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                rsi_value = rsi(df, 14).iloc[-1]
-                if rsi_value < settingRSI:
-                    message = f"!!과매도 현상 발견!! {symbol}"
-                    send_discord_message(message)
-                    return symbol
-            except Exception as e:
-                send_discord_message(f"Error fetching data for {symbol}: {e}")
-            time.sleep(1)
+                # 추가 검증: 심볼이 유효한지 확인
+                exchange.fetch_ohlcv(symbol, timeframe='1m', limit=1)
+                symbols.append(symbol)
+            except:
+                continue
+    return symbols
 
-def buyRSI(symbol, rsi_threshold, amount, leverage):
-    set_leverage(symbol, leverage)
-    while True:
-        try:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe='10m', limit=500)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            current_rsi = rsi(df, 14).iloc[-1]
-            if current_rsi < rsi_threshold:
-                usdt_balance = exchange.fetch_balance()['total']['USDT']
-                if amount > usdt_balance:
-                    amount = usdt_balance * 0.9995
-                order = exchange.create_market_buy_order(symbol, amount * leverage)
-                if order is None:
-                    send_discord_message(f"Error: 매수 주문 실패 - {symbol}")
-                    return None, None
-                message = f"구매 완료: {symbol} - 금액: {amount * leverage} USDT (레버리지 {leverage}배)"
-                send_discord_message(message)
-                time.sleep(1)  # 주문 처리를 위해 잠시 대기
-                volume = order['filled']  # 매수한 수량
-                avg_price = order['price']
-                return avg_price, volume
-            time.sleep(1)
-        except Exception as e:
-            send_discord_message(f"Error in buyRSI: {e}")
-            time.sleep(1)
-
-def sellRSI(symbol, rsi_threshold, avg_price, volume, stop_loss_pct):
-    while True:
-        try:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe='10m', limit=500)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            current_rsi = rsi(df, 14).iloc[-1]
-            current_price = exchange.fetch_ticker(symbol)['close']
-            if current_rsi > rsi_threshold or current_price <= avg_price * (1 - stop_loss_pct):
-                balance = exchange.fetch_balance()[symbol.split('/')[0]]['total']
-                if volume > balance:
-                    volume = balance
-                sell_order = exchange.create_market_sell_order(symbol, volume)
-                if sell_order is None:
-                    send_discord_message(f"Error: 매도 주문 실패 - {symbol}")
-                    return
-                time.sleep(1)  # 주문 처리를 위해 잠시 대기
-                sell_price = current_price
-                profit_loss = (sell_price - avg_price) * volume
-                message = f"판매 완료: {symbol} - 수량: {volume}\n손익: {profit_loss} USDT"
-                send_discord_message(message)
-                break
-            time.sleep(1)
-        except Exception as e:
-            send_discord_message(f"Error in sellRSI: {e}")
-            time.sleep(1)
-    usdt_balance = exchange.fetch_balance()['total']['USDT']
-    send_discord_message(f"현재 현금 잔액: {usdt_balance} USDT")
-
-while True:
+def get_ohlcv(symbol, timeframe='1m', limit=100):
     try:
-        symbol_to_trade = search_onetime(25)
-        if symbol_to_trade:
-            avg_price, volume = buyRSI(symbol_to_trade, 30, 100, 10)  # 여기서 100은 거래할 금액 (USDT), 10은 레버리지 배수입니다.
-            if avg_price is not None and volume is not None:
-                sellRSI(symbol_to_trade, 70, avg_price, volume, 0.10)  # 손절 기준은 10% 손실로 설정
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        return df
     except Exception as e:
-        send_discord_message(f"Error in main loop: {e}")
-        time.sleep(1)
+        print(f"{symbol}의 OHLCV 데이터를 가져오는 중 오류 발생: {e}")
+        return None
+
+def calculate_indicators(df):
+    # RSI
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+
+    # Bollinger Bands
+    df['SMA20'] = df['close'].rolling(window=20).mean()
+    df['stddev'] = df['close'].rolling(window=20).std()
+    df['upper_bb'] = df['SMA20'] + (df['stddev'] * 2)
+    df['lower_bb'] = df['SMA20'] - (df['stddev'] * 2)
+
+    # MACD
+    df['EMA12'] = df['close'].ewm(span=12, adjust=False).mean()
+    df['EMA26'] = df['close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = df['EMA12'] - df['EMA26']
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+    return df
+
+def analyze_symbol(symbol):
+    df = get_ohlcv(symbol)
+    if df is None or len(df) < 100:
+        return None
+
+    df = calculate_indicators(df)
+
+    last_close = df['close'].iloc[-1]
+    last_rsi = df['RSI'].iloc[-1]
+    last_upper_bb = df['upper_bb'].iloc[-1]
+    last_lower_bb = df['lower_bb'].iloc[-1]
+    last_macd = df['MACD'].iloc[-1]
+    last_signal = df['Signal'].iloc[-1]
+    volume_increase = df['volume'].iloc[-1] > df['volume'].mean() * 1.2  # 볼륨 증가 기준을 1.5에서 1.2로 낮춤
+
+    # 변동성 계산 (ATR 사용)
+    df['TR'] = np.maximum(df['high'] - df['low'],
+                          np.maximum(abs(df['high'] - df['close'].shift(1)),
+                                     abs(df['low'] - df['close'].shift(1))))
+    df['ATR'] = df['TR'].rolling(window=14).mean()
+    volatility = df['ATR'].iloc[-1] / last_close
+
+    # 매수 조건
+    buy_condition = (
+        (last_rsi < 40 or last_close < last_lower_bb) and  # RSI 기준을 30에서 40으로 완화
+        (last_macd > last_signal or volume_increase)  # MACD 조건과 볼륨 조건을 OR로 변경
+    )
+
+    # 매도 조건
+    sell_condition = (
+        (last_rsi > 60 or last_close > last_upper_bb) and  # RSI 기준을 70에서 60으로 완화
+        (last_macd < last_signal or volume_increase)  # MACD 조건과 볼륨 조건을 OR로 변경
+    )
+
+    if buy_condition:
+        return {'symbol': symbol, 'action': 'buy', 'price': last_close, 'volatility': volatility}
+    elif sell_condition:
+        return {'symbol': symbol, 'action': 'sell', 'price': last_close, 'volatility': volatility}
+
+    return None
+
+def calculate_position_size(account_balance, price, volatility):
+    risk_amount = account_balance * MAX_RISK_PER_TRADE
+    position_size = risk_amount / (price * volatility)
+    return min(position_size, account_balance * 0.1 / price)  # 최대 계좌의 10%까지만 투자
+
+def place_order(symbol, side, amount):
+    try:
+        order = exchange.create_market_order(symbol, side, amount)
+        message = f"바이낸스 봇 주문 실행: {symbol} {side} {amount}"
+        print(message)
+        send_discord_message(message)
+        return order
+    except Exception as e:
+        error_msg = f"바이낸스 봇 주문 실패: {symbol} {side} {amount} - {e}"
+        print(error_msg)
+        return None
+
+def trading_bot():
+    while True:
+        try:
+            send_discord_message("바이낸스 트레이딩 봇 실행 중...")
+            account_balance = get_account_balance()
+            symbols = get_all_symbols()
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                results = list(executor.map(analyze_symbol, symbols))
+
+            opportunities = [r for r in results if r is not None]
+            send_discord_message(f"발견된 거래 기회 총 개수: {len(opportunities)}")
+
+            for opportunity in opportunities:
+                symbol = opportunity['symbol']
+                action = opportunity['action']
+                price = opportunity['price']
+                volatility = opportunity['volatility']
+
+                position_size = calculate_position_size(account_balance, price, volatility)
+
+                order = place_order(symbol, action, position_size)
+
+                if order:
+                    send_discord_message(f"주문 성공: {symbol} {action} {position_size}")
+
+            send_discord_message("바이낸스 봇 거래 사이클 완료. 1분 대기...")
+            time.sleep(60)  # 1분 대기
+        except Exception as e:
+            error_msg = f"봇 에러 발생: {e}"
+            print(error_msg)
+            send_discord_message(error_msg)
+            time.sleep(60)  # 오류 발생 시 1분 대기
+
+# 트레이딩 봇 실행
+trading_bot()
