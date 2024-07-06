@@ -148,7 +148,7 @@ def trade():
         send_discord_notification(f"바이낸스 가격: {binance_price} USDT\n업비트 가격: {upbit_price_krw} KRW\nUSD-KRW 환율: {usd_krw} KRW/USD")
 
         kimchi_premium = calculate_kimchi_premium(binance_price, upbit_price_krw, usd_krw)
-        send_discord_notification(f"김프: {kimchi_premium:.2f}%")
+        send_discord_notification(f"현재 김프: {kimchi_premium:.2f}%")
 
         if trade_count >= max_trades:
             send_discord_notification(f"김프: {kimchi_premium:.2f}% (거래 중지: 최대 거래 횟수 도달)")
