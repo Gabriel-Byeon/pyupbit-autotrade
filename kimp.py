@@ -107,7 +107,7 @@ def trade():
         upbit_price_krw = get_upbit_price(upbit_symbol)
         usdt_krw = get_usdt_krw_price()
 
-        send_discord_notification(f"바이낸스 가격: {binance_price} USDT\n업비트 가격: {upbit_price_krw} KRW\nUSDT>
+        send_discord_notification(f"바이낸스 가격: {binance_price} USDT\n업비트 가격: {upbit_price_krw} KRW\nUSDT-KRW 환율: {usdt_krw} KRW/USD")
 
         kimchi_premium = calculate_kimchi_premium(binance_price, upbit_price_krw, usdt_krw)
 
@@ -127,13 +127,13 @@ def trade():
         if kimchi_premium <= 0:  # 김프가 0 이하일 때
             send_discord_notification("조건 충족: 김프 <= 0. 포지션 오픈 중.")
             open_positions(btc_amount, binance_symbol, upbit_symbol, upbit_price_krw)
-            message = f"포지션 오픈:\n업비트 매수 가격: {adjusted_upbit_price_usd} USDT\n바이낸스 숏 가격: {adjus>
+            message = f"포지션 오픈:\n업비트 매수 가격: {adjusted_upbit_price_usd} USDT\n바이낸스 숏 가격: {adjusted_binance_price} USDT\n김프: {kimchi_premium:.2f}%\nBTC 양: {btc_amount} BTC"
             send_discord_notification(message)
 
         elif kimchi_premium >= 3:  # 김프가 3 이상일 때
             send_discord_notification("조건 충족: 김프 >= 3. 포지션 종료 중.")
             close_positions(btc_amount, binance_symbol, upbit_symbol)
-            message = f"포지션 종료:\n업비트 매도 가격: {adjusted_upbit_price_usd} USDT\n바이낸스 커버 가격: {adj>
+            message = f"포지션 종료:\n업비트 매도 가격: {adjusted_upbit_price_usd} USDT\n바이낸스 커버 가격: {adjusted_binance_price} USDT\n김프: {kimchi_premium:.2f}%\nBTC 양: {btc_amount} BTC"
             send_discord_notification(message)
 
     except Exception as e:
@@ -148,7 +148,7 @@ while True:
     time.sleep(60)  # 1분마다 실행
 
 
-# 나중에 동작시킬 예정
+###################################################3 나중에 동작시킬 예정
 # import ccxt
 # import requests
 # import time
@@ -255,7 +255,7 @@ while True:
 #         binance.create_market_buy_order(binance_symbol, btc_amount)
 #         send_discord_notification(f"바이낸스: {btc_amount} BTC 숏 포지션 종료 완료")
 
-#         trade_count += 1
+#         trade_count -= 1
 #     except Exception as e:
 #         send_discord_notification(f"포지션 종료 중 오류 발생: {e}")
 #         raise
