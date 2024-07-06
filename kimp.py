@@ -171,3 +171,6 @@ send_discord_notification("김프 매매 봇이 시작되었습니다.")
 while True:
     trade()
     time.sleep(60)  # 1분마다 실행
+
+## ExchangeRate-API 홈페이지
+## https://www.exchangerate-api.com/
