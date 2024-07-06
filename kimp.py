@@ -84,7 +84,7 @@ def get_usd_krw_exchange_rate():
 
 def calculate_kimchi_premium(binance_price_usdt, upbit_price_krw, usd_krw):
     binance_price_krw = binance_price_usdt * usd_krw
-    return (binance_price_krw - upbit_price_krw) / binance_price_krw * 100
+    return (upbit_price_krw - binance_price_krw) / binance_price_krw * 100
 
 def send_discord_notification(message):
     data = {"content": message}
